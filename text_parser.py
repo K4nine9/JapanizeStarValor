@@ -80,6 +80,7 @@ class TextParser:
                     orig_text = '\n'.join(text_lines)
                     if orig_text.endswith('|'):
                         orig_text = orig_text[:-1].strip()
+                    # If no terminating | was found, still use the collected text
                 
                 entry = TextEntry(
                     classname=current_classname,
@@ -135,12 +136,12 @@ class TextParser:
                         # The last line should end with |
                         lines = text.split('\n')
                         f.write(f"{entry.no} {lines[0]}\n")
-                        for j, line in enumerate(lines[1:], 1):
-                            if j == len(lines) - 1:
+                        for idx in range(1, len(lines)):
+                            if idx == len(lines) - 1:
                                 # Last line gets the |
-                                f.write(f"{line}|\n")
+                                f.write(f"{lines[idx]}|\n")
                             else:
-                                f.write(f"{line}\n")
+                                f.write(f"{lines[idx]}\n")
                     else:
                         # Single-line entry
                         f.write(f"{entry.no} {text}|\n")

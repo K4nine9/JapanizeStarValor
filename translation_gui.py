@@ -4,7 +4,6 @@ Provides a tkinter-based interface for managing translations.
 """
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import os
 from text_parser import TextParser
 from database import TranslationDB
 
@@ -142,6 +141,14 @@ class TranslationApp:
         
         # Update display
         self.update_stats()
+        
+        # Ensure proper cleanup on close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+    
+    def on_closing(self):
+        """Handle application closing."""
+        self.db.close()
+        self.root.destroy()
         
     def import_file(self):
         """Import a text file and load into database."""
