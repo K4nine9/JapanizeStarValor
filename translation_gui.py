@@ -46,9 +46,15 @@ class TranslationApp:
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="ファイル", menu=file_menu)
         file_menu.add_command(label="テキストファイルを読み込む", command=self.import_file)
+        file_menu.add_command(label="過去の翻訳をインポート", command=self.import_previous_translation)
         file_menu.add_command(label="テキストファイルにエクスポート", command=self.export_file)
         file_menu.add_separator()
         file_menu.add_command(label="終了", command=self.root.quit)
+        
+        # Edit menu
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="編集", menu=edit_menu)
+        edit_menu.add_command(label="検索", command=self.open_search_dialog)
         
     def _create_ui(self):
         """Create the main user interface."""
@@ -180,6 +186,47 @@ class TranslationApp:
             
         except Exception as e:
             messagebox.showerror("エラー", f"ファイルの読み込みに失敗しました:\n{str(e)}")
+    
+    def import_previous_translation(self):
+        """Import translations from a previously translated file."""
+        filepath = filedialog.askopenfilename(
+            title="過去の翻訳ファイルを選択",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        
+        if not filepath:
+            return
+        
+        # Check if database has entries
+        if self.db.get_entry_count() == 0:
+            messagebox.showwarning("警告", "先に現在の翻訳対象ファイルを読み込んでください。")
+            return
+        
+        try:
+            # Parse the old translation file
+            parser = TextParser()
+            old_entries = parser.parse_file(filepath)
+            
+            if not old_entries:
+                messagebox.showwarning("警告", "エントリが見つかりませんでした。")
+                return
+            
+            # Import translations
+            stats = self.db.import_translations_from_entries(old_entries)
+            
+            # Reload from database to reflect changes
+            self.load_from_db()
+            
+            # Show import statistics
+            msg = (
+                f"インポート結果:\n\n"
+                f"インポート: {stats['matched_by_id']}件\n"
+                f"未一致: {stats['not_matched']}件"
+            )
+            messagebox.showinfo("インポート完了", msg)
+            
+        except Exception as e:
+            messagebox.showerror("エラー", f"インポートに失敗しました:\n{str(e)}")
             
     def export_file(self):
         """Export translations to a text file."""
@@ -342,6 +389,176 @@ class TranslationApp:
         if self.entries:
             self.current_index = len(self.entries) - 1
             self.update_display()
+    
+    def open_search_dialog(self):
+        """Open the search dialog."""
+        SearchDialog(self.root, self.db, self)
+
+
+class SearchDialog:
+    """Search dialog for finding entries by original or translated text."""
+    
+    def __init__(self, parent, db, main_app):
+        """
+        Initialize the search dialog.
+        
+        Args:
+            parent: Parent window
+            db: TranslationDB instance
+            main_app: TranslationApp instance for navigation
+        """
+        self.db = db
+        self.main_app = main_app
+        
+        # Create dialog window
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("検索")
+        self.dialog.geometry("700x500")
+        
+        # Make dialog modal
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        self._create_ui()
+        
+    def _create_ui(self):
+        """Create the search dialog UI."""
+        # Search frame
+        search_frame = ttk.Frame(self.dialog, padding="10")
+        search_frame.pack(fill=tk.X)
+        
+        ttk.Label(search_frame, text="検索:").pack(side=tk.LEFT, padx=(0, 5))
+        
+        self.search_entry = ttk.Entry(search_frame, width=40)
+        self.search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.search_entry.bind('<Return>', lambda e: self.perform_search())
+        
+        ttk.Button(search_frame, text="検索", command=self.perform_search).pack(side=tk.LEFT, padx=5)
+        
+        # Search type selection
+        type_frame = ttk.Frame(self.dialog, padding="10")
+        type_frame.pack(fill=tk.X)
+        
+        ttk.Label(type_frame, text="検索対象:").pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.search_type = tk.StringVar(value="original")
+        ttk.Radiobutton(
+            type_frame, 
+            text="原文", 
+            variable=self.search_type, 
+            value="original"
+        ).pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(
+            type_frame, 
+            text="翻訳", 
+            variable=self.search_type, 
+            value="translation"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # Results frame
+        results_frame = ttk.LabelFrame(self.dialog, text="検索結果", padding="10")
+        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Results count label
+        self.count_label = ttk.Label(results_frame, text="")
+        self.count_label.pack(anchor=tk.W, pady=(0, 5))
+        
+        # Treeview for results
+        tree_scroll = ttk.Scrollbar(results_frame)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.results_tree = ttk.Treeview(
+            results_frame,
+            columns=('class', 'no', 'orig', 'trans'),
+            show='headings',
+            yscrollcommand=tree_scroll.set
+        )
+        tree_scroll.config(command=self.results_tree.yview)
+        
+        self.results_tree.heading('class', text='クラス')
+        self.results_tree.heading('no', text='No')
+        self.results_tree.heading('orig', text='原文')
+        self.results_tree.heading('trans', text='翻訳')
+        
+        self.results_tree.column('class', width=120)
+        self.results_tree.column('no', width=50)
+        self.results_tree.column('orig', width=200)
+        self.results_tree.column('trans', width=200)
+        
+        self.results_tree.pack(fill=tk.BOTH, expand=True)
+        self.results_tree.bind('<Double-Button-1>', self.on_result_double_click)
+        
+        # Button frame
+        button_frame = ttk.Frame(self.dialog, padding="10")
+        button_frame.pack(fill=tk.X)
+        
+        ttk.Button(button_frame, text="閉じる", command=self.dialog.destroy).pack(side=tk.RIGHT)
+        
+    def perform_search(self):
+        """Perform the search based on user input."""
+        search_text = self.search_entry.get().strip()
+        
+        if not search_text:
+            messagebox.showwarning("警告", "検索語を入力してください。", parent=self.dialog)
+            return
+        
+        # Clear previous results
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+        
+        # Perform search
+        try:
+            if self.search_type.get() == "original":
+                results = self.db.search_by_original(search_text)
+            else:
+                results = self.db.search_by_translation(search_text)
+            
+            # Display results
+            for entry in results:
+                orig_preview = entry.orig_text[:40] if len(entry.orig_text) > 40 else entry.orig_text
+                trans_preview = entry.trans_text[:40] if entry.trans_text and len(entry.trans_text) > 40 else entry.trans_text
+                
+                self.results_tree.insert('', tk.END, values=(
+                    f"[{entry.classid}] {entry.classname}",
+                    entry.no,
+                    orig_preview,
+                    trans_preview
+                ), tags=(entry.classid, entry.no))
+            
+            # Update count label
+            self.count_label.config(text=f"{len(results)}件見つかりました")
+            
+            if len(results) == 0:
+                messagebox.showinfo("検索結果", "一致するエントリが見つかりませんでした。", parent=self.dialog)
+                
+        except Exception as e:
+            messagebox.showerror("エラー", f"検索に失敗しました:\n{str(e)}", parent=self.dialog)
+    
+    def on_result_double_click(self, event):
+        """Handle double-click on a search result."""
+        selection = self.results_tree.selection()
+        if not selection:
+            return
+        
+        # Get the classid and no from the selected item
+        item = self.results_tree.item(selection[0])
+        tags = item['tags']
+        if len(tags) < 2:
+            return
+        
+        classid = int(tags[0])
+        no = tags[1]
+        
+        # Find the entry index in main app
+        for i, entry in enumerate(self.main_app.entries):
+            if entry.classid == classid and entry.no == no:
+                self.main_app.current_index = i
+                self.main_app.update_display()
+                # Close the search dialog
+                self.dialog.destroy()
+                # Bring main window to front
+                self.main_app.root.lift()
+                break
 
 
 def main():
