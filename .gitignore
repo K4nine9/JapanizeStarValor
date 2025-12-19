@@ -1,26 +1,5 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
+# Ignore everything under private/
+private/
 
-# Virtual environment
-venv/
-env/
-ENV/
-
-# Database
-*.db
-*.db-journal
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
+# (Optional) keep a placeholder file if needed
+# !private/.gitkeep
