@@ -39,10 +39,12 @@ class TextParser:
         current_classname = None
         current_classid = None
         
+        # Read entire file at once for better performance
         with open(filepath, 'r', encoding='utf-8') as f:
             lines = f.readlines()
         
         i = 0
+        
         while i < len(lines):
             line = lines[i].rstrip('\n')
             

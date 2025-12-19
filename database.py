@@ -24,6 +24,13 @@ class TranslationDB:
         """Connect to the database and create tables if needed."""
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
+        
+        # Optimize SQLite performance
+        self.cursor.execute('PRAGMA journal_mode=WAL')
+        self.cursor.execute('PRAGMA synchronous=NORMAL')
+        self.cursor.execute('PRAGMA cache_size=10000')
+        self.cursor.execute('PRAGMA temp_store=MEMORY')
+        
         self._create_tables()
         
     def _create_tables(self):
@@ -39,6 +46,18 @@ class TranslationDB:
                 UNIQUE(classid, no)
             )
         ''')
+        
+        # Create indexes for faster queries
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_classid_no ON translations(classid, no)
+        ''')
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_orig_text ON translations(orig_text)
+        ''')
+        self.cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_trans_text ON translations(trans_text)
+        ''')
+        
         self.conn.commit()
         
     def clear_all(self):
@@ -70,6 +89,37 @@ class TranslationDB:
         """
         for entry in entries:
             self.insert_entry(entry)
+    
+    def insert_entries_bulk(self, entries, progress_callback=None):
+        """
+        Insert multiple entries at once using bulk insert for better performance.
+        
+        Args:
+            entries: List of TextEntry objects
+            progress_callback: Optional callback function(current, total)
+        """
+        # Prepare data for bulk insert
+        data = [
+            (entry.classname, entry.classid, entry.no, entry.orig_text, entry.trans_text)
+            for entry in entries
+        ]
+        
+        # Use executemany for better performance
+        batch_size = 1000
+        total = len(data)
+        
+        for i in range(0, total, batch_size):
+            batch = data[i:i+batch_size]
+            self.cursor.executemany('''
+                INSERT OR REPLACE INTO translations 
+                (classname, classid, no, orig_text, trans_text)
+                VALUES (?, ?, ?, ?, ?)
+            ''', batch)
+            
+            if progress_callback:
+                progress_callback(min(i + batch_size, total), total)
+        
+        self.conn.commit()
             
     def get_all_entries(self):
         """
@@ -103,10 +153,16 @@ class TranslationDB:
         return self.cursor.fetchone()[0]
     
     def get_translated_count(self):
-        """Get the number of entries with translations."""
-        self.cursor.execute(
-            "SELECT COUNT(*) FROM translations WHERE trans_text != ''"
-        )
+        """Get the number of entries considered as translated.
+        
+        An entry is considered translated if:
+        - Original text is empty (regardless of translation), OR
+        - Original text is not empty AND translation is not empty
+        """
+        self.cursor.execute('''
+            SELECT COUNT(*) FROM translations 
+            WHERE orig_text = '' OR (orig_text != '' AND trans_text != '')
+        ''')
         return self.cursor.fetchone()[0]
     
     def update_translation(self, classid, no, trans_text):
@@ -184,6 +240,68 @@ class TranslationDB:
                 stats['not_matched'] += 1
         
         self.conn.commit()
+        return stats
+    
+    def import_translations_from_entries_bulk(self, old_entries, progress_callback=None):
+        """
+        Import translations from old entries using bulk operations.
+        
+        Args:
+            old_entries: List of TextEntry objects from old translation file
+            progress_callback: Optional callback function(current, total)
+            
+        Returns:
+            Dictionary with statistics: matched_by_id, not_matched
+        """
+        stats = {
+            'matched_by_id': 0,
+            'not_matched': 0
+        }
+        
+        total = len(old_entries)
+        updates = []
+        
+        for idx, old_entry in enumerate(old_entries):
+            # Try to match by (classid, no)
+            self.cursor.execute('''
+                SELECT classid, no, orig_text, trans_text FROM translations
+                WHERE classid = ? AND no = ?
+            ''', (old_entry.classid, old_entry.no))
+            
+            result = self.cursor.fetchone()
+            if result:
+                current_orig = result[2]
+                current_trans = result[3]
+                
+                old_text = old_entry.trans_text if old_entry.trans_text else old_entry.orig_text
+                
+                if old_text != current_orig:
+                    if not current_trans:
+                        updates.append((old_text, old_entry.classid, old_entry.no))
+                        stats['matched_by_id'] += 1
+                    else:
+                        stats['matched_by_id'] += 1
+                else:
+                    stats['not_matched'] += 1
+            else:
+                stats['not_matched'] += 1
+            
+            if progress_callback and (idx + 1) % 500 == 0:
+                progress_callback(idx + 1, total)
+        
+        # Bulk update
+        if updates:
+            self.cursor.executemany('''
+                UPDATE translations
+                SET trans_text = ?
+                WHERE classid = ? AND no = ?
+            ''', updates)
+        
+        self.conn.commit()
+        
+        if progress_callback:
+            progress_callback(total, total)
+        
         return stats
     
     def search_by_original(self, search_text):
