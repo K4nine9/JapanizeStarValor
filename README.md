@@ -2,7 +2,11 @@
 
 ## 概要
 
-[Star Valor](https://store.steampowered.com/app/833360/Star_Valor/)を日本語化するプロジェクトです
+[Star Valor](https://store.steampowered.com/app/833360/Star_Valor/)を日本語化するプロジェクトです。
+
+私家翻訳した翻訳パッチを配布しています。誤訳等のご指摘はIssueか[Steamガイド](https://steamcommunity.com/sharedfiles/filedetails/?id=3626782749) のコメントへお願いします。
+
+**開発から怒られがあった場合、プロジェクトは閉鎖されます。**
 
 ## リポジトリ構成
 
